@@ -1,38 +1,47 @@
 #!/usr/bin/env pypy
 # -*- coding: utf-8 -*-
+# team-checkmates ITSP IIT Bombay, Ashish chiranshu
+## this program contains a chess engine with image processing function , it is part of a chess playing robot project ######
 
-
+########## this is for chess engine do not change this ############
 from __future__ import print_function
 import re, sys, time
 from itertools import count
 from collections import OrderedDict, namedtuple
+#######################################################################
 
+
+############## OpenCV library for pieces detection #########################
 import cv2
 import numpy as np
-######################################## %%my-code %%  #############################
+####################### Serial library for operating arduino through python  #############################
 import serial
 
-ser = serial.Serial('/dev/ttyACM1',9600)
+ser = serial.Serial('/dev/ttyACM1',9600) 
 print(ser.name)
-time.sleep(1)
-input("lets get started")
-ser.write(b'calibration')
-time.sleep(2)
-ser.write(b'calibration')
+time.sleep(1)   ## giving some time to arduino for setup running process
+input("lets get started") ## after setting everything we will give some input to start the program 
+
 feedback = ser.read_until('Calibration is done'.encode('utf-8'))
 print(feedback.decode())
 
-################################## $$ CAMERA SETUP $$###################################
+################################## $$ CAMERA AND IMAGE PROCESSING FUNCTION $$###################################
+################## Before coming here i would recommend to go through  this link https://chessbot.wixsite.com/iitb/computer-vision
+############################## i have explained everything there #############
+###################that will make it easy to understand #######################################
 
-pts1 = np.float32([[68, 17], [642, 12], [59, 584], [638, 599]])
-pts2 = np.float32([[0, 0], [800, 0], [0, 800], [800, 800]])
-matrix = cv2.getPerspectiveTransform(pts1, pts2)
+pts1 = np.float32([[68, 17], [642, 12], [59, 584], [638, 599]])  ### the four points are corners of chess board
+pts2 = np.float32([[0, 0], [800, 0], [0, 800], [800, 800]])  ####### these four points are the corner of chess-board that we want after perspective tranform 
+matrix = cv2.getPerspectiveTransform(pts1, pts2)  ### give matrix of transformation , used in perspective_img function (below)
 
 
-initial_camera_setup = False
-board_previous_state = []
-board_state = []
+initial_camera_setup = False  ## whenever it is true means we have initial/previous state stored in board_previous_state.
+                              ## we will make it false after each robot move so that camera will again take image to get opponent's pieces state
+board_previous_state = []   ## list of squares of chess-board on which pieces of opponent was present just before next move
+board_state = []            ## list of squares of chess-board on which pieces of opponent are present just after next move
 
+
+#### This function filter the contour list on the basis of their area, (if > 200 then choose) ###############
 def threshold_area(contour_lst):
     lst = []
     for i in contour_lst:
@@ -42,11 +51,14 @@ def threshold_area(contour_lst):
             pass
     return lst
 
+######## this function is made for changing the value of initial_camera_setup from any place in program ###########
 def initial_camera_setup_func(val):
 
     global initial_camera_setup
     initial_camera_setup = val
 
+    
+####### checks if val is present in list or not ###############
 def checker(lst,val):
     for i in lst:
         if (i == val) :
@@ -55,6 +67,7 @@ def checker(lst,val):
 
 
 
+### this function takes board_previous_state and board_state and return the difference and the difference is the move of opponent###
 def difference_func(state1, state2):
     first = state1.copy()
     second = state2.copy()
@@ -62,7 +75,7 @@ def difference_func(state1, state2):
     for i in state1:
         for j in state2:
             if i == j :
-                second.remove(j)
+                second.remove(j)  ##### if any value in first is equal to second then delete it from first and second
                 first.remove(i)
 
     if first == [] or second == []:
@@ -71,26 +84,30 @@ def difference_func(state1, state2):
         # print(first)
         # print(second)
         return first[0] + second[0]
+    
+    ### in case of castling opponent will move two of its pieces to two difference place in that case two position will be remaining in both list
     elif ((len(first) == 2) and (len(second) == 2)):
-        # print(first)
+        # print(first) 
         # print(second)
           # case of castling
         if checker(second,'g1'):
-            return 'e1g1'
+            return 'e1g1'   ## non queen-side castling
         elif checker(second, 'c1'):
-            return 'e1c1'
+            return 'e1c1'  ## queen-side castling
     else :
         return 0
 
 
 
 
-
+### use of matrix defined above to get perspective transformed image ##################
 def perspective_img (img):
     result = cv2.warpPerspective(img, matrix, (800, 800))
     return result
 
 
+### as our image is 800*800px so we used this range ######
+######## we'll check contour center with these function to get the the square in which that contour present#####
 def range_x(x_i):
     if (0 <= x_i <= 100) :
           return 'a'
@@ -133,21 +150,23 @@ def range_y(y_i):
 
 
 
+
 def color_mask(img):
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV) ## converting RGB image to HSV space
 
-    lower_color_range = np.array([18, 50, 100])
-    upper_color_range = np.array([38, 200, 255])
+    lower_color_range = np.array([18, 50, 100])  ### this color range is for R Ivory color you can change the range with your color
+    upper_color_range = np.array([38, 200, 255]) 
 
-    mask = cv2.inRange(hsv, lower_color_range, upper_color_range)
-    mask = cv2.erode(mask, (101, 101), iterations=1)
-    mask = cv2.dilate(mask, (141, 141), iterations=1)
+    ##### mask is a binary image used to extract some part of image in which you are interested
+    mask = cv2.inRange(hsv, lower_color_range, upper_color_range) ## appyling the color range(above) to get the mask 
+    mask = cv2.erode(mask, (101, 101), iterations=1)  ## to remove tiny-tiny white shades from mask (noise-removal)
+    mask = cv2.dilate(mask, (141, 141), iterations=1) ## after erode , dilate will make your region of interest smooth and bigger (better to detect)
 
     return mask
 
-
+### this function will give approximate center of the given contour (read about CV2.moments) ##
 def get_center(contour_arg):
-    M = cv2.moments(contour_arg)
+    M = cv2.moments(contour_arg) 
     if M['m00'] != 0:
          cx = int(M['m10']/M['m00'])
          cy = int(M['m01']/M['m00'])
@@ -237,7 +256,10 @@ def camera_func() :
 
 
 
-###################################  $$$$$$$$$$$$$$$$  ######################################
+################################### CAMERA $ IMAGE PROCESSING ENDS HERE  ######################################
+
+
+######################### THE PART BELOW IS CHESS ENGINE ,YOU CAN READ BUT DO NOT TAMPER WITH THIS PART #############################
 
 ###############################################################################
 # Piece-Square tables. Tune these to change sunfish's behaviour
@@ -606,7 +628,10 @@ class Searcher:
         # If the game hasn't finished we can retrieve our move from the
         # transposition table.
         return self.tp_move.get(pos), self.tp_score.get((pos, self.depth, True)).lower
+    
+############################################ CHESS ENGINE ENDS HERE ########################################
 
+######################## PART BELOW IS CHESS INTERFACE , YOU CAN CHANGE THIS PART TO GIVE COMMAND TO ROBOT #############################
 
 ###############################################################################
 # User interface
